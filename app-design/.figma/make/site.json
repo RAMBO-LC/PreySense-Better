@@ -1,0 +1,10 @@
+{
+  "description": "Manage your gaming laptop's fan speed, keyboard lighting, display color, and performance modes with a sleek, minimal, and distraction-free interface.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

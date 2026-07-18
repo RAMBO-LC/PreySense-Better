@@ -1,0 +1,9 @@
+node_modules/
+bin/
+obj/
+dist/
+build/
+out/
+asar_out/
+*.log
+.env

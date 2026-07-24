@@ -3,6 +3,7 @@ using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
 using PreySense;
+using PreySense.Host.Services;
 
 namespace PreySense.Host
 {
@@ -12,14 +13,30 @@ namespace PreySense.Host
         private static readonly string PipeName = "PreySense";
         private static IHardwareController? _hw;
         private static WmiHotkeyWatcher? _hotkeyWatcher;
+        private static LowLevelKeyboardHook? _keyboardHook;
         private static readonly object _stdoutLock = new();
         private static StreamWriter? _stdoutWriter;
         private static byte _lastKnownMode = 0x01;
         private static DateTime _lastModeChangeTime = DateTime.MinValue;
+        private static bool _isStdio;
 
         static async Task Main(string[] args)
         {
             Console.WriteLine("PreySense.Host starting...");
+
+            // ── Install / uninstall auto-start for the Electron app ──
+            if (args.Length > 0 && args[0] == "--install")
+            {
+                string? exePath = args.Length > 1 ? args[1] : null;
+                if (exePath != null)
+                    SetElectronAutoStart(exePath);
+                return;
+            }
+            if (args.Length > 0 && args[0] == "--uninstall")
+            {
+                RemoveElectronAutoStart();
+                return;
+            }
 
             try
             {
@@ -41,9 +58,19 @@ namespace PreySense.Host
                 cts.Cancel();
             };
 
+            // ── Startup: kill conflicting OEM processes ──
+            CloseOemPredatorProcesses();
+
+            // ── WMI hotkey watcher (mode key, etc.) ──
             _hotkeyWatcher = new WmiHotkeyWatcher(OnHotkeyEvent);
 
-            if (args.Length > 0 && args[0] == "--stdio")
+            // ── Low-level keyboard hook for Predator key (scan code 0x75) ──
+            // This runs on a background STA thread with its own message pump.
+            // It logs every scan code to %TEMP%\preysense-hotkey.log for diagnostics.
+            _keyboardHook = new LowLevelKeyboardHook(HandlePredatorKey);
+
+            _isStdio = args.Length > 0 && args[0] == "--stdio";
+            if (_isStdio)
             {
                 await RunStdioAsync(cts.Token);
             }
@@ -52,21 +79,97 @@ namespace PreySense.Host
                 await RunPipeAsync(cts.Token);
             }
 
+            _keyboardHook.Dispose();
             _hotkeyWatcher.Dispose();
             _hw.Dispose();
+        }
+
+        private static void CloseOemPredatorProcesses()
+        {
+            string[] oemNames = ["PredatorSense", "SenseOverlay", "PredatorSenseLauncher"];
+            int currentPid = Environment.ProcessId;
+            foreach (string name in oemNames)
+            {
+                try
+                {
+                    foreach (var proc in System.Diagnostics.Process.GetProcessesByName(name))
+                    {
+                        using (proc)
+                        {
+                            if (proc.Id == currentPid) continue;
+                            DiagLog($"Startup: closing OEM process '{name}' (PID {proc.Id})");
+                            if (!proc.CloseMainWindow() || !proc.WaitForExit(1500))
+                            {
+                                proc.Kill(entireProcessTree: true);
+                                DiagLog($"Startup: killed '{name}' (PID {proc.Id})");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DiagLog($"Startup: failed to close '{name}': {ex.Message}");
+                }
+            }
+        }
+
+        private static void SetElectronAutoStart(string exePath)
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(
+                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run");
+                key.SetValue("PreySense", $"\"{exePath}\" --minimized");
+                DiagLog($"Auto-start registry key set for: {exePath}");
+            }
+            catch (Exception ex)
+            {
+                DiagLog($"Failed to set auto-start: {ex.Message}");
+            }
+        }
+
+        private static void RemoveElectronAutoStart()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", writable: true);
+                key?.DeleteValue("PreySense", throwOnMissingValue: false);
+                DiagLog("Auto-start registry key removed");
+            }
+            catch (Exception ex)
+            {
+                DiagLog($"Failed to remove auto-start: {ex.Message}");
+            }
         }
 
         private static void OnHotkeyEvent(int detail)
         {
             DiagLog($"OnHotkeyEvent called with detail={detail}");
-            if (detail != 5)
+            switch (detail)
             {
-                DiagLog($"OnHotkeyEvent: detail={detail} != 5, ignoring");
-                return;
+                case 5:
+                    HandleModeKey();
+                    break;
+                // ─── Predator-logo key ──────────────────────────────
+                // TODO: The WMI EventDetail value for the Predator-logo key
+                // has NOT been documented yet. To identify it:
+                //   1. Press the physical Predator-logo key while PreySense is running
+                //   2. Check the log at %TEMP%\preysense-hotkey.log for:
+                //      "UNRECOGNIZED EventDetail=<N> — this may be the Predator-logo key"
+                //   3. Once identified, add `case <N>: HandlePredatorKey(); break;` above
+                default:
+                    DiagLog($"UNRECOGNIZED EventDetail={detail} — this may be the Predator-logo key; " +
+                             "add a case in OnHotkeyEvent once identified");
+                    break;
             }
+        }
+
+        private static void HandleModeKey()
+        {
             if ((DateTime.UtcNow - _lastModeChangeTime).TotalSeconds < 2)
             {
-                DiagLog($"OnHotkeyEvent: debounce active, skipping");
+                DiagLog($"HandleModeKey: debounce active, skipping");
                 return;
             }
 
@@ -74,7 +177,7 @@ namespace PreySense.Host
 
             byte nextMode;
             bool onBattery = IsOnBattery();
-            DiagLog($"OnHotkeyEvent: detail=5 ACCEPTED, onBattery={onBattery} _lastKnownMode=0x{_lastKnownMode:X2}");
+            DiagLog($"HandleModeKey: onBattery={onBattery} _lastKnownMode=0x{_lastKnownMode:X2}");
 
             if (onBattery)
             {
@@ -107,17 +210,24 @@ namespace PreySense.Host
                 _ => "Balanced"
             };
 
-            DiagLog($"Computed nextMode=0x{nextMode:X2} ({modeName}), calling SetPowerMode...");
+            DiagLog($"HandleModeKey: nextMode=0x{nextMode:X2} ({modeName}), calling SetPowerMode...");
 
             bool applied = _hw!.SetPowerMode(nextMode);
             DiagLog($"SetPowerMode returned {applied}");
             if (applied)
             {
                 _lastKnownMode = nextMode;
-                DiagLog($"Calling PushEvent(modeChanged, mode={nextMode}, modeName={modeName})");
+                DiagLog($"HandleModeKey: PushEvent(modeChanged, mode={nextMode}, modeName={modeName})");
                 PushEvent("modeChanged", new { mode = nextMode, modeName });
                 DiagLog("PushEvent completed");
             }
+        }
+
+        private static void HandlePredatorKey()
+        {
+            DiagLog("HandlePredatorKey: pushing showApp event to Electron");
+            PushEvent("showApp", new { });
+            DiagLog("HandlePredatorKey: showApp push completed");
         }
 
         private static bool IsOnBattery()

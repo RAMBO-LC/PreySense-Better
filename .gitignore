@@ -29,4 +29,5 @@ PreySense.Desktop/release/
 
 # Unnecessary files and dirs
 build_output/
-nul
+nul
+RELEASE/

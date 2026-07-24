@@ -76,3 +76,12 @@ input[type='range']::-moz-range-thumb {
   border: 2px solid #15171b;
   cursor: pointer;
 }
+
+.drag-region {
+  -webkit-app-region: drag;
+}
+.drag-region button,
+.drag-region [role="button"],
+.drag-region .no-drag {
+  -webkit-app-region: no-drag;
+}

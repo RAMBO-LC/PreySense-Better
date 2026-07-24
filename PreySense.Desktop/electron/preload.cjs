@@ -15,4 +15,10 @@ contextBridge.exposeInMainWorld('preySense', {
     ipcRenderer.on('host:event', handler)
     return () => ipcRenderer.removeListener('host:event', handler)
   },
+
+  getAutoStart: () =>
+    ipcRenderer.invoke('app:get-auto-start'),
+
+  setAutoStart: (enabled) =>
+    ipcRenderer.invoke('app:set-auto-start', enabled),
 })

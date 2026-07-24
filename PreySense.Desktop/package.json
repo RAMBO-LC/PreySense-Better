@@ -21,7 +21,9 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "logo.png",
+      "logo.ico"
     ],
     "asar": true,
     "extraResources": [
@@ -33,7 +35,7 @@
     ],
     "win": {
       "target": ["nsis", "portable"],
-      "icon": null,
+      "icon": "logo.ico",
       "signAndEditExecutable": false
     },
     "nsis": {

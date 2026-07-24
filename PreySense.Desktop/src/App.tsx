@@ -5,7 +5,8 @@ type Screen = 'dashboard' | 'fan' | 'lighting' | 'display'
 type FanMode = 'auto' | 'max' | 'custom'
 type DisplayProfile = 'native' | 'srgb' | 'custom'
 type PerfMode = 'quiet' | 'balanced' | 'performance' | 'turbo'
-type RgbEffect = 'static' | 'zonal_static' | 'breathe' | 'neon' | 'wave' | 'shifting' | 'zoom' | 'snake' | 'disco'
+type RgbMode = 'global' | 'area'
+type RgbEffect = 'static' | 'breathe' | 'neon' | 'wave' | 'shifting' | 'zoom' | 'meteor' | 'twinkling'
 type WaveDir = 'ltr' | 'rtl'
 
 // ─── Constants ─────────────────────────────────────────────────────────
@@ -21,7 +22,7 @@ const ZONE_LABELS = ['Zone 1 \u00b7 Left', 'Zone 2 \u00b7 Ctr-L', 'Zone 3 \u00b7
 const ZONE_DEF = ['#5fa8b0', '#7ca8cc', '#cc9a5f', '#a07bb0']
 
 // Hardware mode IDs (matches RgbProfile.cs UiModeNames order)
-const RGB_MODE: Record<RgbEffect, number> = { static: 0, zonal_static: 0, breathe: 1, neon: 2, wave: 3, shifting: 4, zoom: 5, snake: 6, disco: 7 }
+const RGB_MODE: Record<RgbEffect, number> = { static: 0, breathe: 1, neon: 2, wave: 3, shifting: 4, zoom: 5, meteor: 6, twinkling: 7 }
 
 // ─── Utility ───────────────────────────────────────────────────────────
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -246,7 +247,7 @@ function KeyboardDiagram({ zoneColors, activeZones, onToggleZone, effect, speed 
   const startRef = useRef(Date.now())
 
   useEffect(() => {
-    if (effect === 'static' || effect === 'zonal_static') { setTick(0); return }
+    if (effect === 'static') { setTick(0); return }
     const period = Math.max(200, 1600 - speed * 280)
     const loop = () => {
       const elapsed = (Date.now() - startRef.current) % period
@@ -259,7 +260,7 @@ function KeyboardDiagram({ zoneColors, activeZones, onToggleZone, effect, speed 
   }, [effect, speed])
 
   const zoneAnim = (zone: number) => {
-    if (effect === 'static' || effect === 'zonal_static') return { bg: hex2rgba(zoneColors[zone], zoneColors[zone] === '#000000' ? 0.06 : 0.24), border: hex2rgba(zoneColors[zone], zoneColors[zone] === '#000000' ? 0.15 : 0.55) }
+    if (effect === 'static') return { bg: hex2rgba(zoneColors[zone], zoneColors[zone] === '#000000' ? 0.06 : 0.24), border: hex2rgba(zoneColors[zone], zoneColors[zone] === '#000000' ? 0.15 : 0.55) }
     const c = zoneColors[zone]
     if (effect === 'breathe') {
       const op = 0.15 + 0.6 * Math.abs(Math.sin(tick * Math.PI * 2))
@@ -300,7 +301,7 @@ function KeyboardDiagram({ zoneColors, activeZones, onToggleZone, effect, speed 
                 background: active ? bg : hex2rgba(zoneColors[zone], 0.09),
                 border: `1px solid ${active ? border : B}`,
                 borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: 'pointer', transition: effect === 'static' || effect === 'zonal_static' ? 'background 0.12s, border-color 0.12s' : 'none',
+                cursor: 'pointer', transition: effect === 'static' ? 'background 0.12s, border-color 0.12s' : 'none',
                 fontSize: label.length > 3 ? 7 : label.length > 2 ? 8 : 9,
                 color: active ? zoneColors[zone] : M,
                 fontFamily: "'Inter',sans-serif", fontWeight: 500,
@@ -370,7 +371,7 @@ function StatusBar({ live, mode }: { live: ReturnType<typeof useLive>; mode: str
   ]
 
   return (
-    <div style={{
+    <div className="drag-region" style={{
       height: 34, display: 'flex', alignItems: 'center', flexShrink: 0,
       background: '#101215', borderBottom: `1px solid ${B}`, padding: '0 20px', gap: 18,
     }}>
@@ -478,16 +479,18 @@ function NavRow({ label, onClick }: { label: string; onClick: () => void }) {
 
 // ─── Lighting Screen ──────────────────────────────────────────────────
 const EFFECT_OPTS: { v: RgbEffect; l: string }[] = [
-  { v: 'static', l: 'Static' }, { v: 'zonal_static', l: 'Zonal Static' }, { v: 'breathe', l: 'Breathe' }, { v: 'neon', l: 'Neon' },
+  { v: 'static', l: 'Static' }, { v: 'breathe', l: 'Breathe' }, { v: 'neon', l: 'Neon' },
   { v: 'wave', l: 'Wave' }, { v: 'shifting', l: 'Shifting' }, { v: 'zoom', l: 'Zoom' },
+  { v: 'meteor', l: 'Meteor' }, { v: 'twinkling', l: 'Twinkling' },
 ]
 
-const NEEDS_SPEED: Partial<Record<RgbEffect, boolean>> = { static: false, zonal_static: false }
-const NEEDS_DIR: Partial<Record<RgbEffect, boolean>> = { wave: true }
+const NEEDS_SPEED: Partial<Record<RgbEffect, boolean>> = { static: false }
+const NEEDS_DIR: Partial<Record<RgbEffect, boolean>> = { wave: true, shifting: true }
 
 const WHEEL_SIZE = 128
 
 function LightingScreen() {
+  const [mode, setMode] = useState<RgbMode>('global')
   const [effect, setEffect] = useState<RgbEffect>('static')
   const [activeZones, setActiveZones] = useState<Set<number>>(new Set([0, 1, 2, 3]))
   const [zoneColors, setZoneColors] = useState<string[]>(['#5fa8b0', '#5fa8b0', '#5fa8b0', '#5fa8b0'])
@@ -501,20 +504,20 @@ function LightingScreen() {
   const initHex = rgbToHex(0, 180, 176)
   const [hexInput, setHexInput] = useState(initHex)
 
-  const isZonal = effect === 'zonal_static'
-  const isUniform = effect === 'static'
-  const isAnimated = !isZonal && !isUniform
+  const isArea = mode === 'area'
+  const isStatic = effect === 'static'
+  const isAnimated = !isStatic
+  const areaStatic = isArea && isStatic
   const activeArr = [...activeZones]
-  const activeColor = zoneColors[activeArr[0]] || '#5fa8b0'
   const curRgb = hsvToRgb(hue, sat, val)
 
   useEffect(() => {
     const hex = rgbToHex(curRgb.r, curRgb.g, curRgb.b)
     setHexInput(hex)
-    if (isUniform) {
+    if (!isArea && isStatic) {
       setZoneColors([hex, hex, hex, hex])
     }
-  }, [curRgb.r, curRgb.g, curRgb.b, isUniform])
+  }, [curRgb.r, curRgb.g, curRgb.b, isArea, isStatic])
 
   const applyColorToZones = (color: string, zones?: Set<number>) => {
     const target = zones ?? activeZones
@@ -530,12 +533,12 @@ function LightingScreen() {
   const sendPending = useCallback(() => {
     if (rgbTimer.current) clearTimeout(rgbTimer.current)
     rgbTimer.current = setTimeout(() => {
-      if (isZonal) {
+      if (areaStatic) {
         zoneColors.forEach((c, i) => {
           const { r, g, b } = hexToRgb(c)
           sendCmd('SetRgbZone', { zone: i, r, g, b })
         })
-      } else if (isUniform) {
+      } else if (isStatic) {
         const { r, g, b } = hsvToRgb(hue, sat, val)
         sendCmd('SetRgbMode', { mode: 0, r, g, b, brightness: Math.round(brightness / 10), speed: 3, direction: 0 })
         for (let i = 0; i < 4; i++) sendCmd('SetRgbZone', { zone: i, r, g, b })
@@ -544,17 +547,18 @@ function LightingScreen() {
         sendCmd('SetRgbMode', { mode: RGB_MODE[effect], r: curRgb.r, g: curRgb.g, b: curRgb.b, brightness: Math.round(brightness / 10), speed, direction: hwDir })
       }
     }, 200)
-  }, [effect, hue, sat, val, curRgb, brightness, speed, direction, zoneColors, isZonal, isUniform])
+  }, [effect, hue, sat, val, curRgb, brightness, speed, direction, zoneColors, areaStatic, isStatic])
 
-  useEffect(() => { sendPending() }, [effect, hue, sat, val, curRgb, brightness, speed, direction, zoneColors, sendPending, isZonal, isUniform])
+  useEffect(() => { sendPending() }, [effect, hue, sat, val, curRgb, brightness, speed, direction, zoneColors, sendPending, areaStatic, isStatic])
 
   const handleEffectChange = (e: RgbEffect) => {
     setEffect(e)
-    if (e === 'static') { setActiveZones(new Set([0, 1, 2, 3])); setZoneColors(['#5fa8b0', '#5fa8b0', '#5fa8b0', '#5fa8b0']) }
-    if (e === 'zonal_static') setActiveZones(new Set([0]))
+    setActiveZones(new Set([0, 1, 2, 3]))
+    setZoneColors(['#5fa8b0', '#5fa8b0', '#5fa8b0', '#5fa8b0'])
   }
 
   const toggleZone = (zone: number, multi: boolean) => {
+    if (!areaStatic) return
     setActiveZones(prev => {
       const next = new Set(multi ? prev : [])
       if (next.has(zone)) next.delete(zone); else next.add(zone)
@@ -583,13 +587,17 @@ function LightingScreen() {
     cursor: 'pointer', transition: 'all 0.12s',
   })
 
-  const subtitle = isZonal ? 'Per-zone color, multi-select with Shift+Click'
-    : isUniform ? 'Single color across all zones'
-    : 'Animated effect with global color'
+  const subtitle = isArea
+    ? (isStatic ? 'Per-zone color, click a zone tab to select, Shift+Click for multi-select'
+      : 'Area mode only supports per-zone for Static effect')
+    : 'Single color across all zones'
 
   return (
     <div style={{ padding: '28px 28px' }}>
       <PageHeader title="Keyboard Lighting" subtitle={subtitle} />
+      <div style={{ marginBottom: 12 }}>
+        <SegCtrl opts={[{ v: 'global' as RgbMode, l: 'Global' }, { v: 'area' as RgbMode, l: 'Area' }]} val={mode} onChange={setMode} />
+      </div>
       <div style={{ marginBottom: 20 }}>
         <SegCtrl opts={EFFECT_OPTS} val={effect} onChange={handleEffectChange} />
       </div>
@@ -598,16 +606,16 @@ function LightingScreen() {
         <div style={{ flex: '0 0 auto' }}>
           <Card style={{ marginBottom: 12 }}>
             <div style={{ overflowX: 'auto' }}>
-              <KeyboardDiagram zoneColors={isZonal ? zoneColors : ['#2a2a2a', '#2a2a2a', '#2a2a2a', '#2a2a2a']} activeZones={isZonal ? activeZones : new Set()} onToggleZone={isZonal ? toggleZone : () => {}} effect={isZonal ? effect : 'static'} speed={speed} />
+              <KeyboardDiagram zoneColors={areaStatic ? zoneColors : ['#2a2a2a', '#2a2a2a', '#2a2a2a', '#2a2a2a']} activeZones={areaStatic ? activeZones : new Set()} onToggleZone={areaStatic ? toggleZone : () => {}} effect={areaStatic ? effect : 'static'} speed={speed} />
             </div>
           </Card>
 
-          {isZonal && (
+          {areaStatic && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {ZONE_LABELS.map((label, i) => {
-                const active = isZonal ? activeZones.has(i) : true
+                const active = activeZones.has(i)
                 return (
-                  <button key={i} onClick={e => isZonal && toggleZone(i, e.shiftKey || e.ctrlKey || e.metaKey)} style={zoneLabelStyle(active, zoneColors[i])}>
+                  <button key={i} onClick={e => toggleZone(i, e.shiftKey || e.ctrlKey || e.metaKey)} style={zoneLabelStyle(active, zoneColors[i])}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: zoneColors[i], flexShrink: 0 }} />
                     {label}
                   </button>
@@ -619,12 +627,25 @@ function LightingScreen() {
 
         <div style={{ flex: '1 1 280px', minWidth: 260 }}>
           <Card>
-            <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', marginBottom: 16 }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 16 }}>
               <ColorWheel hue={hue} sat={sat} val={val} size={WHEEL_SIZE} onChange={(h, s, v) => syncColor(h, s, v)} />
               <ValSlider val={val} height={WHEEL_SIZE} onChange={v => syncColor(hue, sat, v)} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <div style={{ fontSize: 9, letterSpacing: '0.07em', textTransform: 'uppercase', color: M, fontWeight: 500, marginBottom: 2 }}>Quick picks</div>
+                {SWATCHES.map(s => {
+                  const refColor = areaStatic ? zoneColors[activeArr[0]] : hexInput
+                  return (
+                    <button key={s.l} onClick={() => applyColorToZones(s.c)} style={{
+                      width: 22, height: 22, borderRadius: '50%', background: s.c, border: '2px solid',
+                      borderColor: refColor === s.c ? T : `${s.c}44`,
+                      cursor: 'pointer', transition: 'border-color 0.1s', padding: 0, flexShrink: 0,
+                    }} title={s.l} />
+                  )
+                })}
+              </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'flex-end' }}>
               <NumInput label="R" val={curRgb.r} min={0} max={255} step={1} onChange={v => handleRgbField('r', v)} />
               <NumInput label="G" val={curRgb.g} min={0} max={255} step={1} onChange={v => handleRgbField('g', v)} />
               <NumInput label="B" val={curRgb.b} min={0} max={255} step={1} onChange={v => handleRgbField('b', v)} />
@@ -640,22 +661,6 @@ function LightingScreen() {
             </div>
 
             <div style={{ marginBottom: 16, borderTop: `1px solid ${B}`, paddingTop: 12 }}>
-              <div style={{ fontSize: 9, letterSpacing: '0.07em', textTransform: 'uppercase', color: M, fontWeight: 500, marginBottom: 8 }}>Quick picks</div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {SWATCHES.map(s => {
-                  const refColor = isZonal ? zoneColors[activeArr[0]] : hexInput
-                  return (
-                    <button key={s.l} onClick={() => applyColorToZones(s.c)} style={{
-                      width: 26, height: 26, borderRadius: 5, background: s.c, border: '2px solid',
-                      borderColor: refColor === s.c ? T : `${s.c}44`,
-                      cursor: 'pointer', transition: 'border-color 0.1s', padding: 0, flexShrink: 0,
-                    }} title={s.l} />
-                  )
-                })}
-              </div>
-            </div>
-
-            <div style={{ marginBottom: isAnimated ? 16 : 0 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                 <span style={{ fontSize: 11, color: M }}>Brightness</span>
                 <Mono style={{ fontSize: 11 }}>{brightness}%</Mono>
@@ -664,7 +669,7 @@ function LightingScreen() {
             </div>
 
             {isAnimated && NEEDS_SPEED[effect] !== false && (
-              <div style={{ marginBottom: NEEDS_DIR[effect] ? 16 : 0 }}>
+              <div style={{ marginBottom: NEEDS_DIR[effect] ? 16 : 0, borderTop: `1px solid ${B}`, paddingTop: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                   <span style={{ fontSize: 11, color: M }}>Speed</span>
                   <Mono style={{ fontSize: 11 }}>{speed}/5</Mono>
@@ -674,9 +679,28 @@ function LightingScreen() {
             )}
 
             {isAnimated && NEEDS_DIR[effect] && (
-              <div style={{ marginBottom: 0 }}>
+              <div style={{ marginBottom: 0, borderTop: isAnimated && NEEDS_SPEED[effect] !== false ? 'none' : `1px solid ${B}`, paddingTop: isAnimated && NEEDS_SPEED[effect] !== false ? 0 : 12 }}>
                 <div style={{ fontSize: 11, color: M, marginBottom: 8 }}>Direction</div>
-                <SegCtrl opts={[{ v: 'ltr' as WaveDir, l: 'Left \u2192 Right' }, { v: 'rtl' as WaveDir, l: 'Right \u2192 Left' }]} val={direction} onChange={setDirection} />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => setDirection('ltr')} style={{
+                    width: 36, height: 32, borderRadius: 6, border: '1px solid',
+                    borderColor: direction === 'ltr' ? hex2rgba(A, 0.55) : B,
+                    background: direction === 'ltr' ? hex2rgba(A, 0.1) : 'transparent',
+                    color: direction === 'ltr' ? A : M, cursor: 'pointer', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', transition: 'all 0.12s',
+                  }} title="Left to Right">
+                    <svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M10 1L15 6L10 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M1 6H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                  </button>
+                  <button onClick={() => setDirection('rtl')} style={{
+                    width: 36, height: 32, borderRadius: 6, border: '1px solid',
+                    borderColor: direction === 'rtl' ? hex2rgba(A, 0.55) : B,
+                    background: direction === 'rtl' ? hex2rgba(A, 0.1) : 'transparent',
+                    color: direction === 'rtl' ? A : M, cursor: 'pointer', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', transition: 'all 0.12s',
+                  }} title="Right to Left">
+                    <svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M6 1L1 6L6 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M15 6H2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                  </button>
+                </div>
               </div>
             )}
           </Card>

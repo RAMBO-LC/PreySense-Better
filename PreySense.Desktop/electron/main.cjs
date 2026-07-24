@@ -3,6 +3,8 @@ const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 
+Menu.setApplicationMenu(null)
+
 let mainWindow = null
 let hostProcess = null
 let tray = null
@@ -12,6 +14,7 @@ let responseBuffer = ''
 let isQuitting = false
 let osdWindow = null
 let osdTimer = null
+let startMinimized = process.argv.includes('--minimized')
 
 // ── Admin Elevation ────────────────────────────────────────────────
 function isAdmin() {
@@ -161,11 +164,25 @@ function handleHostEvent(name, data) {
   } else {
     diagLog(`mainWindow not available (isDestroyed=${mainWindow?.isDestroyed()})`)
   }
-  // Show OSD for mode changes
+  // Show OSD for mode changes (Mode key)
   if (name === 'modeChanged' && data) {
     diagLog('Calling showOsdOverlay')
     showOsdOverlay(data.modeName || 'Balanced', data.mode ?? 1)
     diagLog('showOsdOverlay returned')
+  }
+
+  // Show/focus main app window (Predator-logo key)
+  if (name === 'showApp') {
+    diagLog('Handling showApp event — restoring/focusing main window')
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+    } else {
+      diagLog('mainWindow not available for showApp, creating new window')
+      createWindow()
+    }
+    diagLog('showApp handling complete')
   }
 }
 
@@ -284,7 +301,8 @@ function cleanupOsd() {
 
 // ── Tray ───────────────────────────────────────────────────────────
 function createTray() {
-  const icon = nativeImage.createEmpty()
+  const iconPath = path.join(__dirname, '..', 'logo.png')
+  const icon = nativeImage.createFromPath(iconPath)
   tray = new Tray(icon)
   tray.setToolTip('PreySense')
 
@@ -319,14 +337,22 @@ function createTray() {
 
 // ── Window ─────────────────────────────────────────────────────────
 function createWindow() {
+  const iconPath = path.join(__dirname, '..', 'logo.png')
+  const icon = nativeImage.createFromPath(iconPath)
   mainWindow = new BrowserWindow({
+    icon: icon,
     width: 1280,
     height: 860,
     minWidth: 900,
     minHeight: 600,
-    show: true,
-    frame: true,
-    title: 'PreySense',
+    show: !startMinimized,
+    frame: false,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#101215',
+      symbolColor: '#e4e6ea',
+      height: 34
+    },
     backgroundColor: '#15171b',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -371,10 +397,31 @@ function registerIpcHandlers() {
     isQuitting = true
     app.quit()
   })
+
+  ipcMain.handle('app:get-auto-start', () => {
+    return app.getLoginItemSettings().openAtLogin
+  })
+
+  ipcMain.handle('app:set-auto-start', (_event, enabled) => {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      args: ['--minimized']
+    })
+    return enabled
+  })
 }
 
 // ── App Lifecycle ──────────────────────────────────────────────────
 app.whenReady().then(() => {
+  // Ensure auto-start is enabled (user can disable via settings)
+  const currentSettings = app.getLoginItemSettings()
+  if (!currentSettings.openAtLogin) {
+    app.setLoginItemSettings({
+      openAtLogin: true,
+      args: ['--minimized']
+    })
+  }
+
   startHost()
   registerIpcHandlers()
   createWindow()

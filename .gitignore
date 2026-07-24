@@ -1,9 +1,32 @@
+# Node
 node_modules/
+dist/
+out/
+
+# Electron
+release/
+asar_out/
+
+# .NET
 bin/
 obj/
-dist/
-build/
-out/
-asar_out/
+
+# Logs
 *.log
-.env
+
+# Archives
+*.zip
+
+# IDE
+.vs/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+PreySense.Desktop/release/
+
+# Unnecessary files and dirs
+build_output/
+nul

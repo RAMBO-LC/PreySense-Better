@@ -81,7 +81,7 @@ remains the only vendor-guaranteed option. This fork is an independent, communit
 project, not an official Acer product, and comes with no official support or warranty. Where
 this document describes something as an improvement, it refers specifically to this fork's
 design choices for the Helios Neo 16 (native RPM control, zonal preview, a lighter-weight
-background footprint), not a general claim of superiority over Acer's software as a whole.
+background footprint), not a general claim of superiority over Acer's software as a whole
 
 ---
 
